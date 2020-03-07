@@ -9,6 +9,7 @@ provider:
 custom:
   userPoolName: ${self:service}-user-pool-${self:provider.stage}
   userPoolClientName: ${self:service}-user-pool-client-${self:provider.stage}
+  adminUserPoolGroupName: ${self:service}-admin-user-pool-group-${self:provider.stage}
 
 resources:
   Resources:
@@ -41,3 +42,12 @@ resources:
           - ALLOW_USER_SRP_AUTH
           - ALLOW_REFRESH_TOKEN_AUTH
         PreventUserExistenceErrors: ENABLED
+
+    AdminUserPoolGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPoolGroupName
+        UserPoolId:
+          Ref: CognitoUserPool
+        Precedence: 0
+#        RoleArn:
