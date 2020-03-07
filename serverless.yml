@@ -46,7 +46,7 @@ resources:
     AdminUserPoolGroup:
       Type: AWS::Cognito::UserPoolGroup
       Properties:
-        GroupName: ${self:custom.adminUserPoolGroupName
+        GroupName: ${self:custom.adminUserPoolGroupName}
         UserPoolId:
           Ref: CognitoUserPool
         Precedence: 0
