@@ -9,11 +9,24 @@ provider:
 custom:
   userPoolName: ${self:service}-user-pool-${self:provider.stage}
   userPoolClientName: ${self:service}-user-pool-client-${self:provider.stage}
-  adminUserPoolGroupName: ${self:service}-admin-user-pool-group-${self:provider.stage}
+  identityPoolName: ${self:service}-identity-pool-${self:provider.stage}
+  adminGroupName: ${self:service}-admin-group-${self:provider.stage}
+  adminPolicyName: ${self:service}-admin-policy-${self:provider.stage}
+  adminRoleName: ${self:service}-admin-role-${self:provider.stage}
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+          cors: true
+#          authorizer: aws_iam
 
 resources:
   Resources:
-    CognitoUserPool:
+    UserPool:
       Type: AWS::Cognito::UserPool
       Properties:
         UserPoolName: ${self:custom.userPoolName}
@@ -30,24 +43,103 @@ resources:
             RequireUppercase: false
             TemporaryPasswordValidityDays: 7
 
-    CognitoUserPoolClient:
+    UserPoolClient:
       Type: AWS::Cognito::UserPoolClient
       Properties:
         ClientName: ${self:custom.userPoolClientName}
         GenerateSecret: false
         UserPoolId:
-          Ref: CognitoUserPool
+          Ref: UserPool
         ExplicitAuthFlows:
           - ALLOW_ADMIN_USER_PASSWORD_AUTH
           - ALLOW_USER_SRP_AUTH
           - ALLOW_REFRESH_TOKEN_AUTH
         PreventUserExistenceErrors: ENABLED
 
-    AdminUserPoolGroup:
-      Type: AWS::Cognito::UserPoolGroup
+    IdentityPool:
+      Type: AWS::Cognito::IdentityPool
       Properties:
-        GroupName: ${self:custom.adminUserPoolGroupName}
-        UserPoolId:
-          Ref: CognitoUserPool
-        Precedence: 0
+        IdentityPoolName: ${self:custom.identityPoolName}
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: UserPoolClient
+            ProviderName:
+              Fn::GetAtt: ["UserPool", "ProviderName"]
+
+#    CognitoIdentityPoolRoles:
+#      Type: AWS::Cognito::IdentityPoolRoleAttachment
+#      Properties:
+#        IdentityPoolId:
+#          Ref: CognitoIdentityPool
+#        Roles:
+#          authenticated:
+#            Fn::GetAtt: [CognitoAuthRole, Arn]
+
+    AdminPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:custom.adminPolicyName}
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Action:
+                - "execute-api:Invoke"
+              Resource:
+                Fn::Join:
+                  - ""
+                  -
+                    - "arn:aws:execute-api:"
+                    - Ref: AWS::Region
+                    - ":"
+                    - Ref: AWS::AccountId
+                    - ":"
+                    - Ref: ApiGatewayRestApi
+                    - "/*"
+
+    AdminRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.adminRoleName}
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: IdentityPool
+        Policies:
+          - PolicyName: ${self:custom.adminPolicyName}
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "execute-api:Invoke"
+                  Resource:
+                    Fn::Join:
+                      - ""
+                      - - "arn:aws:execute-api:"
+                        - Ref: AWS::Region
+                        - ":"
+                        - Ref: AWS::AccountId
+                        - ":"
+                        - Ref: ApiGatewayRestApi
+                        - "/*"
+
+
+
+#    AdminGroup:
+#      Type: AWS::Cognito::UserPoolGroup
+#      Properties:
+#        GroupName: ${self:custom.adminGroupName}
+#        UserPoolId:
+#          Ref: CognitoUserPool
+#        Precedence: 0
 #        RoleArn:
