@@ -1,5 +1,4 @@
 service: cognito-example
-
 provider:
   name: aws
   runtime: nodejs12.x
@@ -13,8 +12,28 @@ custom:
   adminGroupName: ${self:service}-admin-group-${self:provider.stage}
   adminPolicyName: ${self:service}-admin-policy-${self:provider.stage}
   adminRoleName: ${self:service}-admin-role-${self:provider.stage}
+  regularUserRoleName: ${self:service}-regular-user-role-${self:provider.stage}
+  regularUserPolicyName: ${self:service}-regular-user-policy-${self:provider.stage}
+  regularUserGroupName: ${self:service}-regular-user-group-${self:provider.stage}
+  emptyRoleName: ${self:service}-empty-role-${self:provider.stage}
 
 functions:
+  someAdminFunction:
+    handler: handler.someAdminFunction
+    events:
+      - http:
+          path: admin/someAdminFunction
+          method: get
+          authorizer: aws_iam
+          # cors: true
+  someRegularUserFunction:
+    handler: handler.someRegularUserFunction
+    events:
+      - http:
+          path: someRegularUserFunction
+          method: get
+          authorizer: aws_iam
+          # cors: true
   hello:
     handler: handler.hello
     events:
@@ -22,7 +41,6 @@ functions:
           path: hello
           method: get
           cors: true
-#          authorizer: aws_iam
 
 resources:
   Resources:
@@ -54,6 +72,7 @@ resources:
           - ALLOW_ADMIN_USER_PASSWORD_AUTH
           - ALLOW_USER_SRP_AUTH
           - ALLOW_REFRESH_TOKEN_AUTH
+          - ALLOW_USER_PASSWORD_AUTH
         PreventUserExistenceErrors: ENABLED
 
     IdentityPool:
@@ -67,36 +86,44 @@ resources:
             ProviderName:
               Fn::GetAtt: ["UserPool", "ProviderName"]
 
-#    CognitoIdentityPoolRoles:
-#      Type: AWS::Cognito::IdentityPoolRoleAttachment
-#      Properties:
-#        IdentityPoolId:
-#          Ref: CognitoIdentityPool
-#        Roles:
-#          authenticated:
-#            Fn::GetAtt: [CognitoAuthRole, Arn]
-
-    AdminPolicy:
-      Type: AWS::IAM::ManagedPolicy
+    IdentityPoolRoleAttachment:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
       Properties:
-        ManagedPolicyName: ${self:custom.adminPolicyName}
-        PolicyDocument:
+        IdentityPoolId:
+          Ref: IdentityPool
+        Roles:
+          "authenticated":
+            Fn::GetAtt: ["EmptyRole", "Arn"]
+        RoleMappings:
+          CognitoProvider:
+            IdentityProvider:
+              Fn::Join:
+                - ""
+                - - "cognito-idp."
+                  - Ref: AWS::Region
+                  - ".amazonaws.com/"
+                  - Ref: UserPool
+                  - ":"
+                  - Ref: UserPoolClient
+            Type: Token
+            AmbiguousRoleResolution: Deny
+
+    EmptyRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.emptyRoleName}
+        AssumeRolePolicyDocument:
           Version: "2012-10-17"
           Statement:
             - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
               Action:
-                - "execute-api:Invoke"
-              Resource:
-                Fn::Join:
-                  - ""
-                  -
-                    - "arn:aws:execute-api:"
-                    - Ref: AWS::Region
-                    - ":"
-                    - Ref: AWS::AccountId
-                    - ":"
-                    - Ref: ApiGatewayRestApi
-                    - "/*"
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: IdentityPool
 
     AdminRole:
       Type: AWS::IAM::Role
@@ -133,13 +160,80 @@ resources:
                         - Ref: ApiGatewayRestApi
                         - "/*"
 
+    RegularUserRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.regularUserRoleName}
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: IdentityPool
+        Policies:
+          - PolicyName: ${self:custom.regularUserPolicyName}
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Deny"
+                  Action:
+                    - "execute-api:Invoke"
+                  Resource:
+                    Fn::Join:
+                      - ""
+                      - - "arn:aws:execute-api:"
+                        - Ref: AWS::Region
+                        - ":"
+                        - Ref: AWS::AccountId
+                        - ":"
+                        - Ref: ApiGatewayRestApi
+                        - "/admin/*"
+                - Effect: "Allow"
+                  Action:
+                    - "execute-api:Invoke"
+                  Resource:
+                    Fn::Join:
+                      - ""
+                      - - "arn:aws:execute-api:"
+                        - Ref: AWS::Region
+                        - ":"
+                        - Ref: AWS::AccountId
+                        - ":"
+                        - Ref: ApiGatewayRestApi
+                        - "/*"
 
+    AdminGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminGroupName}
+        UserPoolId:
+          Ref: UserPool
+        Precedence: 0
+        RoleArn:
+          Fn::GetAtt: [AdminRole, Arn]
 
-#    AdminGroup:
-#      Type: AWS::Cognito::UserPoolGroup
-#      Properties:
-#        GroupName: ${self:custom.adminGroupName}
-#        UserPoolId:
-#          Ref: CognitoUserPool
-#        Precedence: 0
-#        RoleArn:
+    RegularUsergroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.regularUserGroupName}
+        UserPoolId:
+          Ref: UserPool
+        Precedence: 1
+        RoleArn:
+          Fn::GetAtt: [RegularUserRole, Arn]
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
